@@ -1,473 +1,274 @@
-# Secure Coding Practices for .NET API: Addressing OWASP Top 10 (A08:2021 - Software and Data Integrity Failures)
+# Secure Coding Practices for Next.js API: Addressing OWASP Top 10 (A08:2021 - Software and Data Integrity Failures)
 
-## Comprehensive Data Integrity Protection System
+---
 
-### 1. Secure Code Deployment Pipeline
+## Comprehensive Data Integrity Protection System for Next.js
 
-#### Code Signing and Verification Service
+---
 
-```csharp
-public class CodeSigningService
-{
-    private readonly X509Certificate2 _signingCertificate;
-    private readonly ILogger<CodeSigningService> _logger;
+### 1️⃣ Secure Code Deployment Pipeline
 
-    public CodeSigningService(
-        IConfiguration config,
-        ILogger<CodeSigningService> logger)
-    {
-        _signingCertificate = LoadCertificate(config["CodeSigning:CertPath"], 
-                                           config["CodeSigning:CertPassword"]);
-        _logger = logger;
-    }
+#### Code Signing & Verification Middleware
 
-    public byte[] SignAssembly(byte[] assemblyBytes)
-    {
-        using var rsa = _signingCertificate.GetRSAPrivateKey();
-        var hash = SHA256.HashData(assemblyBytes);
-        var signature = rsa.SignHash(hash, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        
-        _logger.LogInformation("Assembly signed with certificate {Thumbprint}", 
-            _signingCertificate.Thumbprint);
-            
-        return signature;
-    }
+```ts
+// lib/codeSigning.ts
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
-    public bool VerifyAssembly(byte[] assemblyBytes, byte[] signature)
-    {
-        using var rsa = _signingCertificate.GetRSAPublicKey();
-        var hash = SHA256.HashData(assemblyBytes);
-        var isValid = rsa.VerifyHash(hash, signature, 
-            HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-            
-        if (!isValid)
-        {
-            _logger.LogWarning("Assembly signature verification failed");
-        }
-        
-        return isValid;
-    }
+const privateKeyPath = process.env.CODE_SIGNING_PRIVATE_KEY_PATH!;
+const publicKeyPath = process.env.CODE_SIGNING_PUBLIC_KEY_PATH!;
 
-    private X509Certificate2 LoadCertificate(string path, string password)
-    {
-        try
-        {
-            return new X509Certificate2(path, password, 
-                X509KeyStorageFlags.EphemeralKeySet | 
-                X509KeyStorageFlags.Exportable);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogCritical(ex, "Failed to load code signing certificate");
-            throw new SecurityException("Code signing certificate load failed", ex);
-        }
-    }
+export function signCode(buffer: Buffer): Buffer {
+  const privateKey = fs.readFileSync(privateKeyPath, "utf8");
+  const signer = crypto.createSign("SHA256");
+  signer.update(buffer);
+  signer.end();
+  return signer.sign(privateKey);
 }
 
-// CI/CD Integration Example
-public class BuildPipelineService
-{
-    private readonly CodeSigningService _signingService;
-    private readonly IArtifactRepository _artifactRepo;
-
-    public BuildPipelineService(
-        CodeSigningService signingService,
-        IArtifactRepository artifactRepo)
-    {
-        _signingService = signingService;
-        _artifactRepo = artifactRepo;
-    }
-
-    public async Task<BuildResult> BuildAndSignAsync(ProjectBuildRequest request)
-    {
-        var buildResult = await BuildProjectAsync(request);
-        
-        // Sign all output assemblies
-        foreach (var artifact in buildResult.Artifacts)
-        {
-            var signature = _signingService.SignAssembly(artifact.Content);
-            artifact.Signature = signature;
-        }
-        
-        // Store signed artifacts
-        await _artifactRepo.StoreAsync(buildResult);
-        
-        return buildResult;
-    }
+export function verifyCode(buffer: Buffer, signature: Buffer): boolean {
+  const publicKey = fs.readFileSync(publicKeyPath, "utf8");
+  const verifier = crypto.createVerify("SHA256");
+  verifier.update(buffer);
+  verifier.end();
+  return verifier.verify(publicKey, signature);
 }
 ```
 
-### 2. Secure Update Mechanism
+**CI/CD Integration Example (Node.js script)**
 
-#### Cryptographic Update Verification System
+```ts
+import { signCode } from "./lib/codeSigning";
+import fs from "fs";
 
-```csharp
-public class SecureUpdateService
-{
-    private readonly IUpdateRepository _updateRepo;
-    private readonly CodeSigningService _signingService;
-    private readonly ILogger<SecureUpdateService> _logger;
+async function buildAndSign() {
+  // Simulate build artifact reading
+  const artifactBuffer = fs.readFileSync("./build/main.js");
 
-    public SecureUpdateService(
-        IUpdateRepository updateRepo,
-        CodeSigningService signingService,
-        ILogger<SecureUpdateService> logger)
-    {
-        _updateRepo = updateRepo;
-        _signingService = signingService;
-        _logger = logger;
-    }
+  // Sign artifact
+  const signature = signCode(artifactBuffer);
 
-    public async Task<UpdateVerificationResult> VerifyUpdateAsync(
-        string updatePackagePath)
-    {
-        var result = new UpdateVerificationResult();
-        
-        try
-        {
-            // Step 1: Verify package signature
-            var package = await _updateRepo.GetPackageAsync(updatePackagePath);
-            if (!_signingService.VerifyAssembly(
-                package.Content, package.Signature))
-            {
-                result.Errors.Add("Invalid package signature");
-                _logger.LogError("Update package signature verification failed");
-                return result;
-            }
+  // Save signature alongside artifact
+  fs.writeFileSync("./build/main.js.sig", signature);
 
-            // Step 2: Verify manifest integrity
-            var manifestHash = ComputeManifestHash(package.Manifest);
-            if (!manifestHash.SequenceEqual(package.ManifestHash))
-            {
-                result.Errors.Add("Manifest integrity check failed");
-                _logger.LogError("Update package manifest verification failed");
-                return result;
-            }
+  console.log("Build artifact signed successfully");
+}
 
-            // Step 3: Verify dependency graph
-            var dependencyResult = VerifyDependencies(package.Manifest);
-            if (!dependencyResult.IsValid)
-            {
-                result.Errors.AddRange(dependencyResult.Errors);
-                return result;
-            }
+buildAndSign().catch(console.error);
+```
 
-            result.IsValid = true;
-            return result;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Update verification failed");
-            result.Errors.Add("Update verification process failed");
-            return result;
-        }
-    }
+---
 
-    private byte[] ComputeManifestHash(UpdateManifest manifest)
-    {
-        using var sha256 = SHA256.Create();
-        return sha256.ComputeHash(Encoding.UTF8.GetBytes(manifest.ToJson()));
-    }
+### 2️⃣ Secure Update Mechanism
 
-    private DependencyVerificationResult VerifyDependencies(UpdateManifest manifest)
-    {
-        var result = new DependencyVerificationResult();
-        
-        foreach (var dependency in manifest.Dependencies)
-        {
-            if (!_updateRepo.IsDependencyAllowed(dependency))
-            {
-                result.Errors.Add($"Dependency {dependency.Name}@{dependency.Version} is not allowed");
-            }
-        }
-        
-        result.IsValid = !result.Errors.Any();
-        return result;
-    }
+#### Cryptographic Update Package Verification
+
+```ts
+// lib/updateVerifier.ts
+import crypto from "crypto";
+import fs from "fs";
+
+export async function verifyUpdatePackage(
+  packagePath: string,
+  signaturePath: string,
+  publicKeyPath: string
+): Promise<boolean> {
+  const packageData = fs.readFileSync(packagePath);
+  const signature = fs.readFileSync(signaturePath);
+  const publicKey = fs.readFileSync(publicKeyPath, "utf8");
+
+  const verify = crypto.createVerify("SHA256");
+  verify.update(packageData);
+  verify.end();
+
+  return verify.verify(publicKey, signature);
 }
 ```
 
-### 3. Data Integrity Protection
+**Manifest and Dependency Verification**
 
-#### Cryptographic Data Integrity Service
+```ts
+// lib/manifestVerifier.ts
+import crypto from "crypto";
 
-```csharp
-public class DataIntegrityService
-{
-    private readonly IKeyVaultService _keyVault;
-    private readonly ILogger<DataIntegrityService> _logger;
+interface UpdateManifest {
+  version: string;
+  dependencies: { name: string; version: string }[];
+  hash: string; // SHA256 hash of manifest content
+}
 
-    public DataIntegrityService(
-        IKeyVaultService keyVault,
-        ILogger<DataIntegrityService> logger)
-    {
-        _keyVault = keyVault;
-        _logger = logger;
-    }
+export function computeManifestHash(manifest: UpdateManifest): string {
+  const json = JSON.stringify(manifest, Object.keys(manifest).sort());
+  return crypto.createHash("sha256").update(json).digest("hex");
+}
 
-    public async Task<SignedData> SignDataAsync(byte[] data, string keyId)
-    {
-        try
-        {
-            var key = await _keyVault.GetKeyAsync(keyId);
-            var hash = SHA256.HashData(data);
-            var signature = await _keyVault.SignAsync(keyId, hash);
-            
-            return new SignedData
-            {
-                Data = data,
-                Signature = signature,
-                KeyId = keyId,
-                Algorithm = "SHA256withRSA",
-                Timestamp = DateTime.UtcNow
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Data signing failed");
-            throw new DataIntegrityException("Data signing operation failed", ex);
-        }
-    }
+export function verifyManifest(manifest: UpdateManifest): boolean {
+  const computedHash = computeManifestHash(manifest);
+  return computedHash === manifest.hash;
+}
 
-    public async Task<bool> VerifyDataAsync(SignedData signedData)
-    {
-        try
-        {
-            var hash = SHA256.HashData(signedData.Data);
-            return await _keyVault.VerifyAsync(
-                signedData.KeyId, 
-                hash, 
-                signedData.Signature);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Data verification failed");
-            return false;
-        }
-    }
-
-    public async Task<EncryptedData> EncryptDataAsync(byte[] data, string keyId)
-    {
-        try
-        {
-            // Generate random AES key
-            var aesKey = GenerateAesKey();
-            
-            // Encrypt data with AES
-            var iv = GenerateRandomIv();
-            var encryptedData = EncryptWithAes(data, aesKey, iv);
-            
-            // Encrypt AES key with RSA
-            var encryptedKey = await _keyVault.EncryptAsync(keyId, aesKey);
-            
-            return new EncryptedData
-            {
-                CipherText = encryptedData,
-                EncryptedKey = encryptedKey,
-                Iv = iv,
-                KeyId = keyId,
-                Algorithm = "AES-256-CBC with RSA-OAEP",
-                Timestamp = DateTime.UtcNow
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Data encryption failed");
-            throw new DataIntegrityException("Data encryption failed", ex);
-        }
-    }
-
-    public async Task<byte[]> DecryptDataAsync(EncryptedData encryptedData)
-    {
-        try
-        {
-            // Decrypt AES key with RSA
-            var aesKey = await _keyVault.DecryptAsync(
-                encryptedData.KeyId, 
-                encryptedData.EncryptedKey);
-                
-            // Decrypt data with AES
-            return DecryptWithAes(
-                encryptedData.CipherText, 
-                aesKey, 
-                encryptedData.Iv);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Data decryption failed");
-            throw new DataIntegrityException("Data decryption failed", ex);
-        }
-    }
+export function verifyAllowedDependencies(
+  manifest: UpdateManifest,
+  allowedDeps: Record<string, string>
+): string[] {
+  return manifest.dependencies
+    .filter(dep => allowedDeps[dep.name] !== dep.version)
+    .map(dep => `Dependency ${dep.name}@${dep.version} not allowed`);
 }
 ```
 
-### 4. Secure Deserialization
+---
 
-#### Safe Serialization Service with Validation
+### 3️⃣ Data Integrity Protection
 
-```csharp
-public class SecureSerializer
-{
-    private readonly JsonSerializerSettings _settings;
-    private readonly ILogger<SecureSerializer> _logger;
+#### Cryptographic Signing and Verification of Data
 
-    public SecureSerializer(
-        ITypeResolver typeResolver,
-        ILogger<SecureSerializer> logger)
-    {
-        _logger = logger;
-        
-        _settings = new JsonSerializerSettings
-        {
-            TypeNameHandling = TypeNameHandling.None, // Critical for security
-            ContractResolver = new SecureContractResolver(typeResolver),
-            MissingMemberHandling = MissingMemberHandling.Error,
-            DateParseHandling = DateParseHandling.None,
-            MaxDepth = 32,
-            SerializationBinder = new BlockedTypesBinder()
-        };
-    }
+```ts
+// lib/dataIntegrity.ts
+import crypto from "crypto";
 
-    public string Serialize<T>(T obj)
-    {
-        return JsonConvert.SerializeObject(obj, _settings);
-    }
-
-    public T Deserialize<T>(string json)
-    {
-        try
-        {
-            return JsonConvert.DeserializeObject<T>(json, _settings);
-        }
-        catch (JsonSerializationException ex)
-        {
-            _logger.LogWarning(ex, "Potential unsafe deserialization attempt");
-            throw new SecureSerializationException("Invalid JSON structure", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Deserialization failed");
-            throw new SecureSerializationException("Deserialization error", ex);
-        }
-    }
+export function signData(data: Buffer, privateKeyPem: string): Buffer {
+  const signer = crypto.createSign("SHA256");
+  signer.update(data);
+  signer.end();
+  return signer.sign(privateKeyPem);
 }
 
-public class BlockedTypesBinder : ISerializationBinder
-{
-    private readonly HashSet<string> _allowedTypes = new()
-    {
-        "System.String", "System.Int32", "System.DateTime",
-        "MyApp.Models.SafeType1", "MyApp.Models.SafeType2"
-    };
+export function verifyData(
+  data: Buffer,
+  signature: Buffer,
+  publicKeyPem: string
+): boolean {
+  const verifier = crypto.createVerify("SHA256");
+  verifier.update(data);
+  verifier.end();
+  return verifier.verify(publicKeyPem, signature);
+}
 
-    public Type BindToType(string assemblyName, string typeName)
-    {
-        var fullName = $"{typeName}, {assemblyName}";
-        if (!_allowedTypes.Contains(fullName))
-        {
-            throw new JsonSerializationException(
-                $"Type {fullName} is not allowed for deserialization");
-        }
-        
-        return Type.GetType(fullName);
-    }
+// AES-256-CBC Encryption/Decryption
 
-    public void BindToName(Type serializedType, out string assemblyName, out string typeName)
-    {
-        assemblyName = null;
-        typeName = null;
-    }
+export function encryptData(data: Buffer, key: Buffer, iv: Buffer): Buffer {
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  return Buffer.concat([cipher.update(data), cipher.final()]);
+}
+
+export function decryptData(data: Buffer, key: Buffer, iv: Buffer): Buffer {
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  return Buffer.concat([decipher.update(data), decipher.final()]);
 }
 ```
 
-### 5. CI/CD Pipeline Security
+---
 
-#### Secure Build Validation Service
+### 4️⃣ Secure Deserialization
 
-```csharp
-public class BuildSecurityValidator
-{
-    private readonly IDependencyScanner _dependencyScanner;
-    private readonly ICodeAnalyzer _codeAnalyzer;
-    private readonly ILogger<BuildSecurityValidator> _logger;
+#### Safe JSON Parsing with Schema Validation
 
-    public BuildSecurityValidator(
-        IDependencyScanner dependencyScanner,
-        ICodeAnalyzer codeAnalyzer,
-        ILogger<BuildSecurityValidator> logger)
-    {
-        _dependencyScanner = dependencyScanner;
-        _codeAnalyzer = codeAnalyzer;
-        _logger = logger;
-    }
+```ts
+// lib/secureDeserialize.ts
+import Ajv, { JSONSchemaType } from "ajv";
 
-    public async Task<BuildValidationResult> ValidateBuildAsync(BuildArtifact artifact)
-    {
-        var result = new BuildValidationResult();
-        
-        // 1. Dependency scanning
-        var dependencyResult = await _dependencyScanner.ScanAsync(artifact);
-        if (dependencyResult.Vulnerabilities.Any())
-        {
-            result.Errors.AddRange(dependencyResult.Vulnerabilities
-                .Select(v => $"Dependency vulnerability: {v.PackageName}@{v.PackageVersion} - {v.Description}"));
-        }
+const ajv = new Ajv();
 
-        // 2. Static code analysis
-        var codeAnalysisResult = await _codeAnalyzer.AnalyzeAsync(artifact);
-        if (codeAnalysisResult.Issues.Any())
-        {
-            result.Errors.AddRange(codeAnalysisResult.Issues
-                .Where(i => i.Severity >= IssueSeverity.High)
-                .Select(i => $"Code issue: {i.Description} in {i.FilePath}"));
-        }
+interface SafePayload {
+  id: string;
+  name: string;
+  timestamp: string;
+}
 
-        // 3. Validate build signatures
-        if (!artifact.IsSigned)
-        {
-            result.Errors.Add("Build artifact is not signed");
-        }
+const schema: JSONSchemaType<SafePayload> = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    timestamp: { type: "string", format: "date-time" },
+  },
+  required: ["id", "name", "timestamp"],
+  additionalProperties: false,
+};
 
-        // 4. Validate build environment
-        if (!artifact.BuildEnvironment.IsTrusted)
-        {
-            result.Errors.Add("Build was not performed in a trusted environment");
-        }
+const validate = ajv.compile(schema);
 
-        result.IsValid = !result.Errors.Any();
-        return result;
-    }
+export function deserializeSafePayload(jsonString: string): SafePayload {
+  const parsed = JSON.parse(jsonString);
+
+  if (!validate(parsed)) {
+    throw new Error(`Invalid payload: ${ajv.errorsText(validate.errors)}`);
+  }
+
+  return parsed;
 }
 ```
+
+**Key Points:**
+
+* Avoid `eval()` or deserializing arbitrary types.
+* Use strict schema validation (e.g., with Ajv).
+* Reject unexpected or extra properties.
+* Validate data formats strictly.
+
+---
+
+### 5️⃣ CI/CD Pipeline Security
+
+#### Static Code Analysis & Dependency Checks Integration (Example with Node.js tools)
+
+```json
+// package.json scripts
+{
+  "scripts": {
+    "lint": "eslint . --ext .ts,.tsx",
+    "security-check": "npm audit --json > audit-report.json",
+    "test": "jest",
+    "build": "next build"
+  }
+}
+```
+
+**Pipeline Script (simplified)**
+
+```bash
+#!/bin/bash
+set -e
+
+# 1. Run static code analysis
+npm run lint
+
+# 2. Run security audit
+npm audit --json > audit-report.json
+if grep -q '"severity": "high"' audit-report.json; then
+  echo "High severity vulnerabilities found. Failing build."
+  exit 1
+fi
+
+# 3. Run tests
+npm test
+
+# 4. Build project
+npm run build
+
+# 5. (Optional) Sign build artifact using Node.js script (see #1)
+node scripts/signBuild.js
+```
+
+---
 
 ## Implementation Checklist
 
-1. **Code Integrity**
-   - Implement code signing for all assemblies
-   - Verify signatures before loading/executing code
-   - Secure your build pipeline against tampering
+| #   | Best Practice                                                                            |
+| --- | ---------------------------------------------------------------------------------------- |
+| 1️⃣ | Sign JavaScript bundles and server code; verify signatures before deploy or runtime load |
+| 2️⃣ | Verify update packages cryptographically before applying                                 |
+| 3️⃣ | Validate manifest and dependencies strictly                                              |
+| 4️⃣ | Sign and verify critical data; use AES + RSA hybrid encryption if needed                 |
+| 5️⃣ | Avoid unsafe deserialization; use strict JSON schema validation                          |
+| 6️⃣ | Integrate static code analysis, dependency audit, and signing in CI/CD pipelines         |
+| 7️⃣ | Secure private keys and signing credentials in environment or vaults                     |
+| 8️⃣ | Monitor runtime integrity; detect unexpected code or config changes                      |
+| 9️⃣ | Limit build environment to trusted runners with audit logging                            |
+| 🔟  | Keep dependencies and security tools up to date                                          |
 
-2. **Update Security**
-   - Use cryptographic signatures for update packages
-   - Verify updates before installation
-   - Secure your update distribution mechanism
+---
 
-3. **Data Protection**
-   - Implement end-to-end encryption for sensitive data
-   - Use digital signatures for critical data
-   - Protect data in transit and at rest
-
-4. **Secure Serialization**
-   - Avoid dangerous serialization formats
-   - Implement strict type checking
-   - Validate all deserialized data
-
-5. **CI/CD Security**
-   - Secure your build environment
-   - Scan for vulnerabilities during build
-   - Verify artifacts before deployment
-
-6. **Runtime Protection**
-   - Implement integrity checks
-   - Monitor for tampering attempts
-   - Respond to integrity violations
+This approach secures the full chain of code and data integrity for Next.js applications—mirroring your .NET example but adapted to JavaScript/TypeScript ecosystem with practical, ready-to-use code snippets.
