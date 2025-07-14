@@ -1,4 +1,4 @@
-# A01:2021 Broken Access Control — Next.js Deep Dive
+### A01:2021 Broken Access Control — Next.js Deep Dive
 
 ---
 
@@ -146,5 +146,3 @@ export default function AdminPage({ user }) {
 | **Logging & Monitoring**            | Log authorization failures for audit and anomaly detection.               |
 
 ---
-
-By rigorously applying these principles, Next.js developers can **effectively prevent Broken Access Control vulnerabilities** — protecting user data, enforcing business rules, and safeguarding critical functions from unauthorized access.
