@@ -1,543 +1,196 @@
-# Secure Coding Practices for .NET API: Addressing OWASP Top 10 (A03:2021 - Injection)
+## ✅ Secure Coding Practices for **Next.js Frontend**
 
-## Introduction to Injection Vulnerabilities
+**OWASP A03:2021 — Injection**
 
-Injection flaws, now ranked #3 in the OWASP Top 10, occur when untrusted data is sent to an interpreter as part of a command or query. In .NET APIs, this most commonly manifests as SQL injection, but can also include LDAP injection, OS command injection, and other variants.
+---
 
-## Common Injection Scenarios in .NET APIs
+### 📌 Why Injection Matters on the Frontend
 
-1. **SQL Injection**
-2. **NoSQL Injection**
-3. **LDAP Injection**
-4. **Command Injection**
-5. **Cross-Site Scripting (XSS)** (now included in this category)
-6. **XML Injection**
-7. **Template Injection**
+While classic SQL injection happens on the server, injection risks on the **frontend** include:
 
-## Step-by-Step Implementation Guide
+* **XSS** — the main injection vector in browsers.
+* **Template injection** — using `dangerouslySetInnerHTML` unsafely.
+* **Client-side eval()**, new Function(), or dynamic imports with user input.
+* **Insecure user input used in client-side rendering (React).**
 
-### 1. Preventing SQL Injection
+---
 
-#### Parameterized Queries with Entity Framework Core
+## ⚠️ Common Frontend Injection Scenarios
 
-```csharp
-// Safe: Parameterized queries with Entity Framework
-public async Task<User> GetUserSafeAsync(string username)
-{
-    // This is safe as EF Core uses parameterized queries
-    return await _context.Users
-        .FirstOrDefaultAsync(u => u.Username == username);
-}
+1️⃣ **Cross-Site Scripting (XSS)** — injecting scripts into rendered HTML.
 
-// Safe: Explicit parameterized query
-public async Task<User> GetUserSafeRawAsync(string username)
-{
-    return await _context.Users
-        .FromSqlInterpolated($"SELECT * FROM Users WHERE Username = {username}")
-        .FirstOrDefaultAsync();
-}
+2️⃣ **DOM-Based XSS** — manipulating DOM with untrusted input.
 
-// Dangerous: String concatenation (NEVER DO THIS)
-public async Task<User> GetUserUnsafeAsync(string username)
-{
-    var sql = $"SELECT * FROM Users WHERE Username = '{username}'";
-    return await _context.Users
-        .FromSqlRaw(sql) // Vulnerable to SQL injection!
-        .FirstOrDefaultAsync();
+3️⃣ **Client-side template injection** — rendering user data in React without escaping.
+
+4️⃣ **Insecure dynamic code execution** — `eval()`, `new Function()`.
+
+5️⃣ **Unsafe URL redirection** — open redirect vulnerabilities.
+
+---
+
+## ✅ Next.js Secure Coding Patterns
+
+---
+
+### 1️⃣ Always Escape / Sanitize User-Generated HTML
+
+React escapes output by default, **except**:
+
+```jsx
+{/* ❌ Unsafe */}
+<div dangerouslySetInnerHTML={{ __html: userInput }} />
+
+{/* ✅ Safe */}
+import DOMPurify from 'dompurify';
+
+const safeHtml = DOMPurify.sanitize(userInput);
+<div dangerouslySetInnerHTML={{ __html: safeHtml }} />;
+```
+
+✔️ If you **must** render raw HTML: **sanitize** first.
+
+---
+
+### 2️⃣ Never Use `eval()` or `new Function()`
+
+```js
+// ❌ Don't
+eval(userInput);
+const f = new Function(userInput);
+
+// ✅ Instead
+// Use safe JSON.parse if needed
+const obj = JSON.parse(userInput);
+```
+
+---
+
+### 3️⃣ Validate URLs for Redirects
+
+**❌ Bad:**
+
+```js
+// Redirect to any URL the user gives
+router.push(userInputRedirect);
+```
+
+**✅ Good:**
+
+```js
+// Validate that it’s an internal route
+if (userRedirect.startsWith('/')) {
+  router.push(userRedirect);
+} else {
+  router.push('/'); // fallback
 }
 ```
 
-#### Stored Procedures with Parameters
+---
 
-```csharp
-public async Task<User> GetUserByEmailSafeAsync(string email)
-{
-    // Using stored procedure with parameters
-    return await _context.Users
-        .FromSqlRaw("EXEC dbo.GetUserByEmail @Email", 
-            new SqlParameter("@Email", email))
-        .FirstOrDefaultAsync();
-}
+### 4️⃣ Prevent DOM-Based XSS
+
+Never trust values used in:
+
+* `innerHTML`
+* `document.write`
+* `document.location`
+* `document.cookie`
+
+Example:
+
+```js
+// ❌ Vulnerable
+document.body.innerHTML = location.hash;
+
+// ✅ Safe
+import DOMPurify from 'dompurify';
+document.body.innerHTML = DOMPurify.sanitize(location.hash);
 ```
 
-### 2. Preventing NoSQL Injection
+---
 
-#### Secure MongoDB Queries
+### 5️⃣ Use CSP Headers in Next.js
 
-```csharp
-// Safe: Using filter builders
-public async Task<User> GetUserFromMongoSafeAsync(string username)
-{
-    var filter = Builders<User>.Filter.Eq(u => u.Username, username);
-    return await _mongoCollection.Find(filter).FirstOrDefaultAsync();
-}
+Set strict **Content-Security-Policy** headers.
 
-// Dangerous: Concatenating query (NEVER DO THIS)
-public async Task<User> GetUserFromMongoUnsafeAsync(string username)
-{
-    var jsonQuery = "{ 'Username': '" + username + "' }";
-    return await _mongoCollection.Find(BsonDocument.Parse(jsonQuery))
-                                .FirstOrDefaultAsync();
-}
+`next.config.js`:
+
+```js
+const securityHeaders = [
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'"
+    ].join('; ')
+  }
+];
+
+module.exports = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: securityHeaders,
+      },
+    ];
+  },
+};
 ```
 
-### 3. Preventing LDAP Injection
+---
 
-```csharp
-// Safe: Using parameterized LDAP queries
-public async Task<DirectoryEntry> FindLdapUserSafeAsync(string username)
-{
-    using var entry = new DirectoryEntry("LDAP://domain.com");
-    using var searcher = new DirectorySearcher(entry);
-    
-    // Escape special LDAP characters
-    var safeUsername = EscapeLdapSearchFilter(username);
-    searcher.Filter = $"(&(objectClass=user)(sAMAccountName={safeUsername}))";
-    
-    return await Task.Run(() => searcher.FindOne());
-}
+### 6️⃣ Escape Dynamic Data in URLs
 
-private static string EscapeLdapSearchFilter(string input)
-{
-    var specialChars = new[] { '\\', '*', '(', ')', '\0', '/' };
-    var escaped = new StringBuilder();
-    
-    foreach (var c in input)
-    {
-        if (specialChars.Contains(c))
-        {
-            escaped.Append($"\\{(int)c:X2}");
-        }
-        else
-        {
-            escaped.Append(c);
-        }
-    }
-    
-    return escaped.ToString();
-}
+When building query params, **use URLSearchParams**:
+
+```js
+const params = new URLSearchParams({ term: userInput });
+fetch(`/api/search?${params.toString()}`);
 ```
 
-### 4. Preventing Command Injection
+---
 
-```csharp
-// Safe: Avoiding shell execution
-public async Task<string> RunProcessSafeAsync(string fileName, string arguments)
-{
-    var process = new Process
-    {
-        StartInfo = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            RedirectStandardOutput = true,
-            UseShellExecute = false, // Critical!
-            CreateNoWindow = true
-        }
-    };
-    
-    process.Start();
-    return await process.StandardOutput.ReadToEndAsync();
-}
+### 7️⃣ Never Trust Query Params or Local Storage
 
-// Dangerous: Shell execution with user input (NEVER DO THIS)
-public async Task<string> RunProcessUnsafeAsync(string command)
-{
-    var process = new Process
-    {
-        StartInfo = new ProcessStartInfo
-        {
-            FileName = "cmd.exe",
-            Arguments = $"/C {command}",
-            RedirectStandardOutput = true,
-            UseShellExecute = false
-        }
-    };
-    
-    process.Start();
-    return await process.StandardOutput.ReadToEndAsync();
-}
+Validate and sanitize everything:
+
+```ts
+import DOMPurify from 'dompurify';
+
+const term = router.query.term;
+const safeTerm = DOMPurify.sanitize(term);
 ```
 
-### 5. Preventing Cross-Site Scripting (XSS)
+---
 
-#### Input Sanitization
+## ✅ Frontend XSS Testing
 
-```csharp
-// HTML sanitizer service
-public class HtmlSanitizerService
-{
-    private readonly HtmlSanitizer _sanitizer;
+* Test with payloads like `<script>alert(1)</script>`, `"><img src=x onerror=alert(1)>`.
+* Use your browser dev tools to check **what’s rendered**.
+* Use CSP headers to block inline scripts.
 
-    public HtmlSanitizerService()
-    {
-        _sanitizer = new HtmlSanitizer();
-        
-        // Configure allowed elements and attributes
-        _sanitizer.AllowedTags.Add("b");
-        _sanitizer.AllowedTags.Add("i");
-        _sanitizer.AllowedTags.Add("u");
-        _sanitizer.AllowedAttributes.Add("class");
-        
-        // Remove all other tags and attributes
-        _sanitizer.AllowedSchemes.Clear();
-        _sanitizer.AllowedCssProperties.Clear();
-    }
+---
 
-    public string SanitizeHtml(string input)
-    {
-        return _sanitizer.Sanitize(input);
-    }
-}
-```
+## ✅ Frontend Monitoring for Injection
 
-#### Content Security Policy (CSP) Headers
+* Log unexpected redirects.
+* Alert on XSS reports (e.g. use `Report-To` or `Content-Security-Policy: report-uri`).
 
-```csharp
-// Middleware to add CSP headers
-public class SecurityHeadersMiddleware
-{
-    private readonly RequestDelegate _next;
+---
 
-    public SecurityHeadersMiddleware(RequestDelegate next)
-    {
-        _next = next;
-    }
+## ✅ Best Practices Summary
 
-    public async Task Invoke(HttpContext context)
-    {
-        // Add CSP header
-        context.Response.Headers.Add(
-            "Content-Security-Policy",
-            "default-src 'self'; " +
-            "script-src 'self' 'unsafe-inline' https://cdn.example.com; " +
-            "style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data:; " +
-            "font-src 'self'; " +
-            "connect-src 'self'; " +
-            "media-src 'self'; " +
-            "object-src 'none'; " +
-            "frame-ancestors 'none'; " +
-            "base-uri 'self'; " +
-            "form-action 'self'; " +
-            "upgrade-insecure-requests;");
-            
-        await _next(context);
-    }
-}
-
-// Register in Program.cs
-app.UseMiddleware<SecurityHeadersMiddleware>();
-```
-
-### 6. Preventing XML Injection (XXE)
-
-```csharp
-// Safe XML reader settings
-public class SafeXmlParser
-{
-    public XDocument ParseXmlSafe(Stream xmlStream)
-    {
-        var settings = new XmlReaderSettings
-        {
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null, // Disable external references
-            MaxCharactersFromEntities = 0
-        };
-        
-        using var reader = XmlReader.Create(xmlStream, settings);
-        return XDocument.Load(reader);
-    }
-
-    public XDocument ParseXmlUnsafe(Stream xmlStream)
-    {
-        // Dangerous: Allows XXE attacks
-        return XDocument.Load(xmlStream);
-    }
-}
-```
-
-### 7. Preventing Template Injection
-
-```csharp
-// Safe template rendering
-public class SafeTemplateRenderer
-{
-    private readonly RazorLightEngine _engine;
-
-    public SafeTemplateRenderer()
-    {
-        _engine = new RazorLightEngineBuilder()
-            .UseMemoryCachingProvider()
-            .Build();
-    }
-
-    public async Task<string> RenderTemplateSafeAsync<T>(string template, T model)
-    {
-        // Ensure template doesn't contain dangerous directives
-        if (template.Contains("@inherits") || template.Contains("@section"))
-        {
-            throw new SecurityException("Dangerous template directive detected");
-        }
-        
-        return await _engine.CompileRenderStringAsync(
-            Guid.NewGuid().ToString(),
-            template,
-            model);
-    }
-}
-```
-
-## Input Validation Framework
-
-```csharp
-// Comprehensive input validation
-public class InputValidator
-{
-    public ValidationResult ValidateUserInput(UserInput input)
-    {
-        var result = new ValidationResult();
-        
-        // Validate username
-        if (string.IsNullOrWhiteSpace(input.Username))
-        {
-            result.AddError("Username is required");
-        }
-        else if (input.Username.Length > 50)
-        {
-            result.AddError("Username too long");
-        }
-        else if (!Regex.IsMatch(input.Username, @"^[a-zA-Z0-9_\-\.]+$"))
-        {
-            result.AddError("Username contains invalid characters");
-        }
-        
-        // Validate email
-        if (!IsValidEmail(input.Email))
-        {
-            result.AddError("Invalid email format");
-        }
-        
-        // Validate against common injection patterns
-        var injectionPatterns = new[] 
-        {
-            "<script", 
-            "--", 
-            ";", 
-            "/*", 
-            "*/", 
-            "xp_", 
-            "char(",
-            "waitfor delay",
-            "select ",
-            "insert ",
-            "update ",
-            "delete ",
-            "drop ",
-            "create ",
-            "alter ",
-            "exec ",
-            "union "
-        };
-        
-        foreach (var prop in input.GetType().GetProperties())
-        {
-            if (prop.PropertyType != typeof(string)) continue;
-            
-            var value = prop.GetValue(input) as string;
-            if (string.IsNullOrEmpty(value)) continue;
-            
-            foreach (var pattern in injectionPatterns)
-            {
-                if (value.Contains(pattern, StringComparison.OrdinalIgnoreCase))
-                {
-                    result.AddError($"Potential injection pattern detected in {prop.Name}");
-                    break;
-                }
-            }
-        }
-        
-        return result;
-    }
-
-    private bool IsValidEmail(string email)
-    {
-        try
-        {
-            var addr = new System.Net.Mail.MailAddress(email);
-            return addr.Address == email;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-}
-
-public class ValidationResult
-{
-    public bool IsValid => !Errors.Any();
-    public List<string> Errors { get; } = new List<string>();
-    
-    public void AddError(string error)
-    {
-        Errors.Add(error);
-    }
-}
-```
-
-## Testing for Injection Vulnerabilities
-
-```csharp
-[Fact]
-public async Task GetUser_WithMaliciousInput_DoesNotExecuteInjection()
-{
-    // Arrange
-    var client = _factory.CreateClient();
-    var maliciousInput = "admin' OR '1'='1";
-    
-    // Act
-    var response = await client.GetAsync($"/api/users?username={maliciousInput}");
-    var content = await response.Content.ReadAsStringAsync();
-    
-    // Assert
-    Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    Assert.DoesNotContain("administrator", content);
-}
-
-[Fact]
-public async Task SearchUsers_WithXssAttempt_SanitizesOutput()
-{
-    // Arrange
-    var client = _factory.CreateClient();
-    var xssAttempt = "<script>alert('xss')</script>";
-    
-    // Act
-    var response = await client.GetAsync($"/api/users/search?term={xssAttempt}");
-    var content = await response.Content.ReadAsStringAsync();
-    
-    // Assert
-    Assert.DoesNotContain("<script>", content);
-    Assert.Contains("&lt;script&gt;", content);
-}
-
-[Fact]
-public void EscapeLdapSearchFilter_WithSpecialChars_EscapesCorrectly()
-{
-    // Arrange
-    var input = "admin)(objectClass=*))";
-    var expected = "admin\\29\\28objectClass=\\2A\\29\\29";
-    
-    // Act
-    var result = EscapeLdapSearchFilter(input);
-    
-    // Assert
-    Assert.Equal(expected, result);
-}
-```
-
-## Monitoring and Logging Injection Attempts
-
-```csharp
-// Injection attempt detection middleware
-public class InjectionDetectionMiddleware
-{
-    private readonly RequestDelegate _next;
-    private readonly ILogger<InjectionDetectionMiddleware> _logger;
-
-    public InjectionDetectionMiddleware(
-        RequestDelegate next,
-        ILogger<InjectionDetectionMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
-
-    public async Task Invoke(HttpContext context)
-    {
-        // Check query string
-        foreach (var (key, value) in context.Request.Query)
-        {
-            if (IsPotentialInjection(value))
-            {
-                LogInjectionAttempt(context, key, value, "query string");
-                await BlockRequest(context);
-                return;
-            }
-        }
-        
-        // Check form data
-        if (context.Request.HasFormContentType)
-        {
-            var form = await context.Request.ReadFormAsync();
-            foreach (var (key, value) in form)
-            {
-                if (IsPotentialInjection(value))
-                {
-                    LogInjectionAttempt(context, key, value, "form data");
-                    await BlockRequest(context);
-                    return;
-                }
-            }
-        }
-        
-        await _next(context);
-    }
-
-    private bool IsPotentialInjection(string value)
-    {
-        if (string.IsNullOrEmpty(value)) return false;
-        
-        var patterns = new[]
-        {
-            "--", ";", "/*", "*/", "xp_", 
-            "char(", "waitfor delay", "select ", 
-            "insert ", "update ", "delete ", 
-            "drop ", "create ", "alter ", "exec ", 
-            "union ", "<script", "document.cookie",
-            "onload=", "onerror=", "onclick="
-        };
-        
-        return patterns.Any(p => 
-            value.Contains(p, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void LogInjectionAttempt(HttpContext context, string key, 
-                                   string value, string source)
-    {
-        _logger.LogWarning(
-            "Potential injection attempt detected from {IP}. Source: {Source}, Key: {Key}, Value: {Value}",
-            context.Connection.RemoteIpAddress,
-            source,
-            key,
-            value);
-            
-        // Alert security team
-        SecurityAlertService.RaiseAlert(
-            $"Injection attempt detected in {context.Request.Path}",
-            AlertSeverity.High);
-    }
-
-    private async Task BlockRequest(HttpContext context)
-    {
-        context.Response.StatusCode = StatusCodes.Status400BadRequest;
-        await context.Response.WriteAsync("Invalid request detected");
-    }
-}
-
-// Register in Program.cs
-app.UseMiddleware<InjectionDetectionMiddleware>();
-```
-
-## Best Practices Summary
-
-1. **Always use parameterized queries** - Never concatenate SQL queries
-2. **Use ORM safely** - Even with Entity Framework, avoid raw SQL with user input
-3. **Validate all inputs** - Whitelist acceptable characters and patterns
-4. **Sanitize output** - Especially for HTML, XML, and other structured output
-5. **Use secure APIs** - Prefer safe methods over potentially dangerous ones
-6. **Implement Content Security Policy** - Mitigate impact of successful XSS
-7. **Disable dangerous features** - Like DTD processing in XML parsers
-8. **Escape special characters** - When working with LDAP, OS commands, etc.
-9. **Log injection attempts** - Monitor for attack patterns
-10. **Regularly test** - Use both automated scanning and manual testing
+✔️ React escapes by default — don’t disable it.
+✔️ Sanitize before using `dangerouslySetInnerHTML`.
+✔️ Don’t use `eval()`.
+✔️ Validate all redirects.
+✔️ Set strong CSP headers.
+✔️ Treat all URL/query/localStorage input as untrusted.
+✔️ Test with common XSS payloads.
