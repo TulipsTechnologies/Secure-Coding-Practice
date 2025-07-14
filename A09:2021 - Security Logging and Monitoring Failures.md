@@ -1,549 +1,400 @@
-# Secure Coding Practices for .NET API: Addressing OWASP Top 10 (A09:2021 - Security Logging and Monitoring Failures)
+# Secure Coding Practices for Next.js API: Addressing OWASP Top 10 (A09:2021 - Security Logging and Monitoring Failures)
 
 ## Comprehensive Security Monitoring Framework
+
+---
 
 ### 1. Centralized Security Event Logging
 
 #### Structured Logging Service Implementation
 
-```csharp
-public class SecurityEventLogger : ISecurityEventLogger
-{
-    private readonly ILogger<SecurityEventLogger> _logger;
-    private readonly IEventAggregator _eventAggregator;
-    private readonly IHttpContextAccessor _httpContextAccessor;
+```ts
+// lib/securityEventLogger.ts
+import pino from "pino";
+import { NextApiRequest } from "next";
 
-    public SecurityEventLogger(
-        ILogger<SecurityEventLogger> logger,
-        IEventAggregator eventAggregator,
-        IHttpContextAccessor httpContextAccessor)
-    {
-        _logger = logger;
-        _eventAggregator = eventAggregator;
-        _httpContextAccessor = httpContextAccessor;
+export interface SecurityEvent {
+  eventType: string;
+  severity: "info" | "warn" | "error";
+  timestamp: string;
+  correlationId: string;
+  ipAddress: string;
+  userAgent: string;
+  userId: string;
+  details: any;
+}
+
+export class SecurityEventLogger {
+  private logger = pino({
+    level: "info",
+    formatters: {
+      level(label) {
+        return { level: label.toUpperCase() };
+      },
+    },
+  });
+
+  logSecurityEvent(event: Partial<SecurityEvent> & { details: any }, req?: NextApiRequest) {
+    try {
+      const enrichedEvent: SecurityEvent = {
+        eventType: event.eventType,
+        severity: event.severity,
+        timestamp: new Date().toISOString(),
+        correlationId: req?.headers["x-correlation-id"]?.toString() ?? crypto.randomUUID(),
+        ipAddress: req?.headers["x-forwarded-for"]?.toString() || req?.socket.remoteAddress || "unknown",
+        userAgent: req?.headers["user-agent"]?.toString() ?? "unknown",
+        userId: req?.user?.id ?? "anonymous",  // req.user set by your auth middleware
+        details: event.details,
+      };
+
+      this.logger.info({ securityEvent: enrichedEvent }, "Security event logged");
+
+      // Publish to event bus or message queue if applicable
+      // e.g., eventBus.publish("securityEvent", enrichedEvent);
+
+    } catch (error) {
+      this.logger.error({ err: error }, "Failed to log security event");
     }
+  }
 
-    public void LogSecurityEvent(SecurityEvent securityEvent)
-    {
-        try
-        {
-            // Enrich with contextual information
-            securityEvent.Timestamp = DateTime.UtcNow;
-            securityEvent.CorrelationId = GetCorrelationId();
-            securityEvent.IpAddress = GetIpAddress();
-            securityEvent.UserAgent = GetUserAgent();
-            securityEvent.UserId = GetUserId();
+  logAuthenticationEvent(success: boolean, username: string, method: string, failureReason?: string, req?: NextApiRequest) {
+    this.logSecurityEvent({
+      eventType: success ? "AuthenticationSuccess" : "AuthenticationFailure",
+      severity: success ? "info" : "warn",
+      details: {
+        username,
+        authenticationMethod: method,
+        failureReason,
+      },
+    }, req);
+  }
 
-            // Structured logging with Serilog
-            _logger.LogInformation("Security event: {@SecurityEvent}", securityEvent);
-
-            // Publish to event bus for real-time processing
-            _eventAggregator.Publish(new SecurityEventNotification(securityEvent));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to log security event");
-        }
-    }
-
-    public void LogAuthenticationEvent(AuthenticationEvent authEvent)
-    {
-        var securityEvent = new SecurityEvent
-        {
-            EventType = authEvent.Success ? "AuthenticationSuccess" : "AuthenticationFailure",
-            Severity = authEvent.Success ? SecurityEventSeverity.Information : SecurityEventSeverity.Warning,
-            Details = new
-            {
-                authEvent.Username,
-                authEvent.AuthenticationMethod,
-                authEvent.FailureReason
-            }
-        };
-
-        LogSecurityEvent(securityEvent);
-    }
-
-    public void LogAuthorizationEvent(AuthorizationEvent authzEvent)
-    {
-        var securityEvent = new SecurityEvent
-        {
-            EventType = authzEvent.Success ? "AuthorizationSuccess" : "AuthorizationFailure",
-            Severity = authzEvent.Success ? SecurityEventSeverity.Information : SecurityEventSeverity.Warning,
-            Details = new
-            {
-                authzEvent.UserId,
-                authzEvent.Resource,
-                authzEvent.Action,
-                authzEvent.DeniedReason
-            }
-        };
-
-        LogSecurityEvent(securityEvent);
-    }
-
-    private string GetCorrelationId()
-    {
-        return _httpContextAccessor.HttpContext?
-            .Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? Guid.NewGuid().ToString();
-    }
-
-    private string GetIpAddress()
-    {
-        return _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    }
-
-    private string GetUserAgent()
-    {
-        return _httpContextAccessor.HttpContext?
-            .Request.Headers["User-Agent"].FirstOrDefault() ?? "unknown";
-    }
-
-    private string GetUserId()
-    {
-        return _httpContextAccessor.HttpContext?.User?
-            .FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "anonymous";
-    }
+  logAuthorizationEvent(success: boolean, userId: string, resource: string, action: string, deniedReason?: string, req?: NextApiRequest) {
+    this.logSecurityEvent({
+      eventType: success ? "AuthorizationSuccess" : "AuthorizationFailure",
+      severity: success ? "info" : "warn",
+      details: {
+        userId,
+        resource,
+        action,
+        deniedReason,
+      },
+    }, req);
+  }
 }
 ```
+
+---
 
 ### 2. Real-time Security Monitoring
 
-#### Anomaly Detection Service
+#### Anomaly Detection Service (Example: Brute Force Detector)
 
-```csharp
-public class AnomalyDetectionService : IHostedService
-{
-    private readonly ISecurityEventQueue _eventQueue;
-    private readonly IEnumerable<IAnomalyDetector> _detectors;
-    private readonly ILogger<AnomalyDetectionService> _logger;
-    private Timer _timer;
+```ts
+// services/anomalyDetectionService.ts
+import { SecurityEvent } from "../lib/securityEventLogger";
 
-    public AnomalyDetectionService(
-        ISecurityEventQueue eventQueue,
-        IEnumerable<IAnomalyDetector> detectors,
-        ILogger<AnomalyDetectionService> logger)
-    {
-        _eventQueue = eventQueue;
-        _detectors = detectors;
-        _logger = logger;
-    }
-
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        _timer = new Timer(ProcessEvents, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
-        return Task.CompletedTask;
-    }
-
-    private void ProcessEvents(object state)
-    {
-        try
-        {
-            var events = _eventQueue.DequeueRecentEvents();
-            if (!events.Any()) return;
-
-            Parallel.ForEach(_detectors, detector =>
-            {
-                try
-                {
-                    var anomalies = detector.Detect(events);
-                    foreach (var anomaly in anomalies)
-                    {
-                        _logger.LogWarning("Security anomaly detected: {AnomalyType}", anomaly.Type);
-                        AlertSecurityTeam(anomaly);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Anomaly detector failed");
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Anomaly detection processing failed");
-        }
-    }
-
-    private void AlertSecurityTeam(SecurityAnomaly anomaly)
-    {
-        // Implementation to notify security team via preferred channels
-        // (email, Slack, PagerDuty, etc.)
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken)
-    {
-        _timer?.Dispose();
-        return Task.CompletedTask;
-    }
+interface SecurityAnomaly {
+  type: string;
+  severity: "low" | "medium" | "high";
+  details: any;
 }
 
-// Example detector for brute force attacks
-public class BruteForceDetector : IAnomalyDetector
-{
-    private readonly ILogger<BruteForceDetector> _logger;
+export class BruteForceDetector {
+  detect(events: SecurityEvent[]): SecurityAnomaly[] {
+    // Detect >5 failed auth attempts by same username within time window
+    const failedAuths = events
+      .filter(e => e.eventType === "AuthenticationFailure")
+      .reduce((acc, e) => {
+        const user = e.details.username;
+        acc[user] = acc[user] ? [...acc[user], e] : [e];
+        return acc;
+      }, {} as Record<string, SecurityEvent[]>);
 
-    public BruteForceDetector(ILogger<BruteForceDetector> logger)
-    {
-        _logger = logger;
+    const anomalies: SecurityAnomaly[] = [];
+
+    for (const [username, attempts] of Object.entries(failedAuths)) {
+      if (attempts.length > 5) {
+        anomalies.push({
+          type: "BruteForceAttempt",
+          severity: "high",
+          details: {
+            username,
+            attemptCount: attempts.length,
+            firstAttempt: attempts[0].timestamp,
+            lastAttempt: attempts[attempts.length - 1].timestamp,
+            ipAddresses: [...new Set(attempts.map(a => a.ipAddress))],
+          },
+        });
+      }
     }
 
-    public IEnumerable<SecurityAnomaly> Detect(IEnumerable<SecurityEvent> events)
-    {
-        var failedAuths = events
-            .Where(e => e.EventType == "AuthenticationFailure")
-            .GroupBy(e => e.Details.Username)
-            .Where(g => g.Count() > 5)
-            .ToList();
+    return anomalies;
+  }
+}
 
-        foreach (var group in failedAuths)
-        {
-            _logger.LogWarning(
-                "Possible brute force attack against account {Username} - {Count} attempts",
-                group.Key, group.Count());
+// Example runner periodically processing queued events
+export class AnomalyDetectionService {
+  private detectors = [new BruteForceDetector()];
+  private eventQueue: SecurityEvent[] = []; // Ideally from DB or message queue
 
-            yield return new SecurityAnomaly
-            {
-                Type = "BruteForceAttempt",
-                Severity = SecurityAnomalySeverity.High,
-                Details = new
-                {
-                    Username = group.Key,
-                    AttemptCount = group.Count(),
-                    FirstAttempt = group.Min(e => e.Timestamp),
-                    LastAttempt = group.Max(e => e.Timestamp),
-                    IpAddresses = group.Select(e => e.IpAddress).Distinct()
-                }
-            };
-        }
-    }
+  enqueue(event: SecurityEvent) {
+    this.eventQueue.push(event);
+  }
+
+  processEvents() {
+    if (this.eventQueue.length === 0) return;
+
+    this.detectors.forEach(detector => {
+      const anomalies = detector.detect(this.eventQueue);
+      anomalies.forEach(anomaly => {
+        console.warn("Security anomaly detected:", anomaly.type, anomaly.details);
+        // TODO: Alert security team via email, Slack, PagerDuty, etc.
+      });
+    });
+
+    this.eventQueue = []; // Clear after processing
+  }
 }
 ```
+
+---
 
 ### 3. Audit Trail Implementation
 
 #### Comprehensive Audit Service
 
-```csharp
-public class AuditService : IAuditService
-{
-    private readonly IAuditRepository _repository;
-    private readonly IHttpContextAccessor _httpContextAccessor;
-    private readonly ILogger<AuditService> _logger;
+```ts
+// services/auditService.ts
+import { PrismaClient } from "@prisma/client"; // Or your ORM/DB client
+import { NextApiRequest } from "next";
 
-    public AuditService(
-        IAuditRepository repository,
-        IHttpContextAccessor httpContextAccessor,
-        ILogger<AuditService> logger)
-    {
-        _repository = repository;
-        _httpContextAccessor = httpContextAccessor;
-        _logger = logger;
-    }
-
-    public async Task RecordActionAsync(AuditAction action, object target, string description)
-    {
-        try
-        {
-            var auditRecord = new AuditRecord
-            {
-                Timestamp = DateTime.UtcNow,
-                Action = action.ToString(),
-                UserId = GetCurrentUserId(),
-                IpAddress = GetIpAddress(),
-                UserAgent = GetUserAgent(),
-                TargetType = target.GetType().Name,
-                TargetId = GetTargetId(target),
-                Description = description,
-                Details = JsonSerializer.Serialize(target)
-            };
-
-            await _repository.AddAsync(auditRecord);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to record audit action");
-        }
-    }
-
-    public async Task<IEnumerable<AuditRecord>> QueryAsync(AuditQuery query)
-    {
-        try
-        {
-            return await _repository.QueryAsync(query);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Audit query failed");
-            throw;
-        }
-    }
-
-    private string GetCurrentUserId()
-    {
-        return _httpContextAccessor.HttpContext?.User?
-            .FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "system";
-    }
-
-    private string GetIpAddress()
-    {
-        return _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    }
-
-    private string GetUserAgent()
-    {
-        return _httpContextAccessor.HttpContext?.Request.Headers["User-Agent"].ToString() ?? "unknown";
-    }
-
-    private string GetTargetId(object target)
-    {
-        return target switch
-        {
-            IHasId entity => entity.Id.ToString(),
-            _ => target.GetHashCode().ToString()
-        };
-    }
+interface AuditRecord {
+  timestamp: string;
+  action: string;
+  userId: string;
+  ipAddress: string;
+  userAgent: string;
+  targetType: string;
+  targetId: string;
+  description: string;
+  details: string;
 }
 
-// Example usage in controllers
-[HttpPut("users/{id}")]
-[Authorize(Roles = "Admin")]
-public async Task<IActionResult> UpdateUser(string id, [FromBody] UserUpdateDto updateDto)
-{
-    var existingUser = await _userService.GetByIdAsync(id);
-    
-    await _auditService.RecordActionAsync(
-        AuditAction.Update, 
-        existingUser, 
-        $"User update initiated by {User.Identity.Name}");
-    
-    var updatedUser = await _userService.UpdateAsync(id, updateDto);
-    
-    await _auditService.RecordActionAsync(
-        AuditAction.Update, 
-        updatedUser, 
-        $"User update completed by {User.Identity.Name}");
-    
-    return Ok(updatedUser);
+export class AuditService {
+  private prisma = new PrismaClient();
+
+  async recordAction(
+    action: string,
+    target: any,
+    description: string,
+    req?: NextApiRequest
+  ) {
+    try {
+      const auditRecord: AuditRecord = {
+        timestamp: new Date().toISOString(),
+        action,
+        userId: req?.user?.id ?? "system",
+        ipAddress: req?.headers["x-forwarded-for"]?.toString() || req?.socket.remoteAddress || "unknown",
+        userAgent: req?.headers["user-agent"]?.toString() || "unknown",
+        targetType: target?.constructor?.name ?? typeof target,
+        targetId: target?.id ?? JSON.stringify(target).slice(0, 100),
+        description,
+        details: JSON.stringify(target),
+      };
+
+      await this.prisma.auditLog.create({ data: auditRecord });
+
+    } catch (error) {
+      console.error("Failed to record audit action", error);
+    }
+  }
+
+  async query(filter: Partial<AuditRecord>) {
+    return this.prisma.auditLog.findMany({ where: filter });
+  }
 }
 ```
+
+**Example usage in API route:**
+
+```ts
+// pages/api/users/[id].ts
+import { AuditService } from "../../../services/auditService";
+
+const auditService = new AuditService();
+
+export default async function handler(req, res) {
+  const userId = req.query.id;
+
+  // Assume getUser and updateUser are implemented services
+  const user = await getUser(userId);
+
+  await auditService.recordAction("UpdateUser", user, `Update initiated by ${req.user?.id}`, req);
+
+  const updatedUser = await updateUser(userId, req.body);
+
+  await auditService.recordAction("UpdateUser", updatedUser, `Update completed by ${req.user?.id}`, req);
+
+  res.status(200).json(updatedUser);
+}
+```
+
+---
 
 ### 4. Security Alerting System
 
 #### Multi-Channel Alerting Service
 
-```csharp
-public class SecurityAlertService : ISecurityAlertService
-{
-    private readonly IEnumerable<IAlertNotifier> _notifiers;
-    private readonly ILogger<SecurityAlertService> _logger;
-
-    public SecurityAlertService(
-        IEnumerable<IAlertNotifier> notifiers,
-        ILogger<SecurityAlertService> logger)
-    {
-        _notifiers = notifiers;
-        _logger = logger;
-    }
-
-    public async Task RaiseAlertAsync(SecurityAlert alert)
-    {
-        _logger.LogWarning(
-            "Security alert raised: {AlertTitle} (Severity: {AlertSeverity})", 
-            alert.Title, alert.Severity);
-
-        var tasks = _notifiers
-            .Where(n => n.SupportsSeverity(alert.Severity))
-            .Select(n => NotifyAsync(n, alert))
-            .ToList();
-
-        await Task.WhenAll(tasks);
-    }
-
-    private async Task NotifyAsync(IAlertNotifier notifier, SecurityAlert alert)
-    {
-        try
-        {
-            await notifier.NotifyAsync(alert);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send alert via {NotifierName}", notifier.GetType().Name);
-        }
-    }
+```ts
+// services/securityAlertService.ts
+export interface SecurityAlert {
+  title: string;
+  severity: "low" | "medium" | "high";
+  timestamp: string;
+  details: string;
+  remediation?: string[];
 }
 
-// Email notifier implementation
-public class EmailAlertNotifier : IAlertNotifier
-{
-    private readonly IEmailService _emailService;
-    private readonly AlertingConfiguration _config;
+export interface AlertNotifier {
+  supportsSeverity(severity: string): boolean;
+  notify(alert: SecurityAlert): Promise<void>;
+}
 
-    public EmailAlertNotifier(
-        IEmailService emailService,
-        IOptions<AlertingConfiguration> config)
-    {
-        _emailService = emailService;
-        _config = config.Value;
-    }
+export class SecurityAlertService {
+  private notifiers: AlertNotifier[];
 
-    public bool SupportsSeverity(SecurityAlertSeverity severity)
-    {
-        return severity >= SecurityAlertSeverity.Medium;
-    }
+  constructor(notifiers: AlertNotifier[]) {
+    this.notifiers = notifiers;
+  }
 
-    public async Task NotifyAsync(SecurityAlert alert)
-    {
-        var message = new EmailMessage
-        {
-            To = _config.SecurityTeamEmail,
-            Subject = $"[Security Alert] {alert.Title}",
-            Body = FormatAlertBody(alert)
-        };
+  async raiseAlert(alert: SecurityAlert) {
+    console.warn(`Security alert: ${alert.title} (Severity: ${alert.severity})`);
 
-        await _emailService.SendAsync(message);
-    }
-
-    private string FormatAlertBody(SecurityAlert alert)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine($"<h1>Security Alert: {alert.Title}</h1>");
-        sb.AppendLine($"<p><strong>Severity:</strong> {alert.Severity}</p>");
-        sb.AppendLine($"<p><strong>Timestamp:</strong> {alert.Timestamp:yyyy-MM-dd HH:mm:ss}</p>");
-        sb.AppendLine($"<p><strong>Details:</strong></p>");
-        sb.AppendLine($"<pre>{alert.Details}</pre>");
-        
-        if (alert.Remediation != null)
-        {
-            sb.AppendLine($"<p><strong>Recommended Actions:</strong></p>");
-            sb.AppendLine($"<ul>{string.Join("", alert.Remediation.Select(r => $"<li>{r}</li>"))}</ul>");
-        }
-        
-        return sb.ToString();
-    }
+    await Promise.all(
+      this.notifiers
+        .filter(n => n.supportsSeverity(alert.severity))
+        .map(n => n.notify(alert).catch(err => console.error(`Notifier failed:`, err)))
+    );
+  }
 }
 ```
+
+**Email Notifier Example**
+
+```ts
+// services/emailAlertNotifier.ts
+import nodemailer from "nodemailer";
+import { SecurityAlert, AlertNotifier } from "./securityAlertService";
+
+export class EmailAlertNotifier implements AlertNotifier {
+  private transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT),
+    secure: true,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  private securityTeamEmail = process.env.SECURITY_TEAM_EMAIL!;
+
+  supportsSeverity(severity: string) {
+    return ["medium", "high"].includes(severity);
+  }
+
+  async notify(alert: SecurityAlert) {
+    const htmlBody = `
+      <h1>Security Alert: ${alert.title}</h1>
+      <p><strong>Severity:</strong> ${alert.severity}</p>
+      <p><strong>Timestamp:</strong> ${alert.timestamp}</p>
+      <p><strong>Details:</strong></p>
+      <pre>${alert.details}</pre>
+      ${alert.remediation ? `<p><strong>Remediation:</strong></p><ul>${alert.remediation.map(r => `<li>${r}</li>`).join("")}</ul>` : ""}
+    `;
+
+    await this.transporter.sendMail({
+      from: `"Security Alert" <alerts@example.com>`,
+      to: this.securityTeamEmail,
+      subject: `[Security Alert] ${alert.title}`,
+      html: htmlBody,
+    });
+  }
+}
+```
+
+---
 
 ### 5. Log Protection Mechanisms
 
-#### Secure Log Management Service
+#### Secure Log Management Service with Sanitization and Encryption
 
-```csharp
-public class SecureLogService : ILogService
-{
-    private readonly ILogger _logger;
-    private readonly IDataProtector _protector;
-    private readonly ILogSanitizer _sanitizer;
+```ts
+// lib/secureLogService.ts
+import pino from "pino";
+import crypto from "crypto";
 
-    public SecureLogService(
-        ILogger<SecureLogService> logger,
-        IDataProtectionProvider protectionProvider,
-        ILogSanitizer sanitizer)
-    {
-        _logger = logger;
-        _protector = protectionProvider.CreateProtector("LogProtection");
-        _sanitizer = sanitizer;
+export class SecureLogService {
+  private logger = pino();
+  private encryptionKey: Buffer;
+
+  constructor(encryptionKeyHex: string) {
+    this.encryptionKey = Buffer.from(encryptionKeyHex, "hex");
+  }
+
+  private sanitize(input: string): string {
+    const patterns = [
+      /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g, // Credit cards
+      /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/g,           // SSN
+      /password=[^&\s]+/gi,                        // password=...
+      /api[_-]?key=[^&\s]+/gi                      // api_key=...
+    ];
+    let sanitized = input;
+    for (const pattern of patterns) {
+      sanitized = sanitized.replace(pattern, "[REDACTED]");
     }
+    return sanitized;
+  }
 
-    public void LogInformation(string message, params object[] args)
-    {
-        var sanitizedArgs = SanitizeArguments(args);
-        _logger.LogInformation(message, sanitizedArgs);
-    }
+  logInfo(message: string, ...args: any[]) {
+    this.logger.info(this.sanitize(message), ...args);
+  }
 
-    public void LogWarning(string message, params object[] args)
-    {
-        var sanitizedArgs = SanitizeArguments(args);
-        _logger.LogWarning(message, sanitizedArgs);
-    }
+  logWarning(message: string, ...args: any[]) {
+    this.logger.warn(this.sanitize(message), ...args);
+  }
 
-    public void LogError(Exception exception, string message, params object[] args)
-    {
-        var sanitizedArgs = SanitizeArguments(args);
-        _logger.LogError(exception, message, sanitizedArgs);
-    }
+  logError(err: Error, message: string, ...args: any[]) {
+    this.logger.error({ err }, this.sanitize(message), ...args);
+  }
 
-    public void LogSensitive(string sensitiveMessage, params object[] sensitiveArgs)
-    {
-        var protectedMessage = _protector.Protect(sensitiveMessage);
-        var protectedArgs = sensitiveArgs.Select(a => 
-            a is string s ? _protector.Protect(s) : a).ToArray();
-            
-        _logger.LogInformation("[Protected] " + protectedMessage, protectedArgs);
-    }
-
-    private object[] SanitizeArguments(object[] args)
-    {
-        return args.Select(arg =>
-        {
-            if (arg is string s)
-            {
-                return _sanitizer.Sanitize(s);
-            }
-            return arg;
-        }).ToArray();
-    }
-}
-
-// Log sanitizer implementation
-public class LogSanitizer : ILogSanitizer
-{
-    private readonly string _replacement = "[REDACTED]";
-    private readonly string[] _sensitivePatterns = new[]
-    {
-        @"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b", // Credit cards
-        @"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b", // SSN
-        @"(?i)\bpassword\b[^=]*=[^=]*\b\w+\b", // Password=value
-        @"(?i)\bapi[-_]?key\b[^=]*=[^=]*\b\w+\b", // API_KEY=value
-    };
-
-    public string Sanitize(string input)
-    {
-        if (string.IsNullOrEmpty(input))
-            return input;
-
-        foreach (var pattern in _sensitivePatterns)
-        {
-            input = Regex.Replace(input, pattern, _replacement);
-        }
-
-        return input;
-    }
+  logSensitive(message: string) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", this.encryptionKey, iv);
+    let encrypted = cipher.update(message, "utf8", "hex");
+    encrypted += cipher.final("hex");
+    const tag = cipher.getAuthTag().toString("hex");
+    this.logger.info(`[ENCRYPTED_LOG] iv=${iv.toString("hex")} tag=${tag} data=${encrypted}`);
+  }
 }
 ```
 
+---
+
 ## Implementation Checklist
 
-1. **Comprehensive Logging**
-   - Log all security-relevant events
-   - Include sufficient context (timestamps, user IDs, IPs)
-   - Use structured logging format
+| #   | Best Practice                                                                           |
+| --- | --------------------------------------------------------------------------------------- |
+| 1️⃣ | Log all security-relevant events with rich context (timestamps, user ID, IP, UserAgent) |
+| 2️⃣ | Implement real-time anomaly detection services to catch suspicious patterns             |
+| 3️⃣ | Maintain detailed audit trails for sensitive actions with secure storage                |
+| 4️⃣ | Use multi-channel alerting with severity filtering and remediation instructions         |
+| 5️⃣ | Sanitize logs to redact sensitive data before writing                                   |
+| 6️⃣ | Encrypt sensitive logs or use protected storage mechanisms                              |
+| 7️⃣ | Restrict access to logs and audit data                                                  |
+| 8️⃣ | Define and enforce log retention and archival policies                                  |
+| 9️⃣ | Perform regular incident response drills based on logged events                         |
+| 🔟  | Monitor and audit logging pipeline for failures or tampering attempts                   |
 
-2. **Real-time Monitoring**
-   - Implement anomaly detection
-   - Set up alerts for suspicious activities
-   - Correlate events across systems
-
-3. **Audit Trails**
-   - Record sensitive operations
-   - Protect audit logs from tampering
-   - Implement secure audit log access
-
-4. **Alerting System**
-   - Multi-channel notifications
-   - Appropriate severity levels
-   - Include remediation steps
-
-5. **Log Protection**
-   - Sanitize sensitive data
-   - Encrypt confidential information
-   - Control log access
-
-6. **Retention Policy**
-   - Define log retention periods
-   - Comply with regulatory requirements
-   - Implement secure log archival
-
-7. **Incident Response**
-   - Document investigation procedures
-   - Establish escalation paths
-   - Conduct regular drills
+---
