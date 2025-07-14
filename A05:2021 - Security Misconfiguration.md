@@ -1,526 +1,239 @@
-# Secure Coding Practices for .NET API: Addressing OWASP Top 10 (A05:2021 - Security Misconfiguration)
+## 🔒 Secure Coding Practices for **Next.js Frontend**
 
-## Introduction to Security Misconfiguration Risks
+**OWASP A05:2021 – Security Misconfiguration**
 
-Security Misconfiguration moves up to #5 in the OWASP Top 10 2021. This occurs when security settings are undefined, misconfigured, or left at default values. For .NET APIs, this includes insecure server configurations, improper error handling, unnecessary features enabled, and more.
+---
 
-## Common Security Misconfigurations in .NET APIs
+### 📌 What does *Security Misconfiguration* mean in the frontend?
 
-1. **Insecure Default Configurations**
-2. **Verbose Error Messages**
-3. **Unnecessary HTTP Methods Enabled**
-4. **Improper CORS Configuration**
-5. **Missing Security Headers**
-6. **Debug Features Enabled in Production**
-7. **Insecure File/Directory Permissions**
+A lot!
+Most frontend devs think “it’s the backend’s problem” — but many attack surfaces originate in misconfigured **frontend builds**, **runtime environments**, and **browser security policies**.
 
-## Step-by-Step Secure Configuration Guide
+Common examples:
 
-### 1. Secure Application Startup
+* Open `robots.txt` or `.env` in your build output
+* Wrong Content Security Policy (CSP)
+* Source maps exposed in production
+* Debug endpoints left enabled
+* Wrong CORS settings exposing your API
+* Hardcoded secrets in the bundle
+* Missing secure headers
 
-#### Program.cs Secure Defaults
+---
 
-```csharp
-var builder = WebApplication.CreateBuilder(args);
+## ⚡️ Common Misconfigurations in Next.js
 
-// 1. Remove server header
-builder.WebHost.ConfigureKestrel(serverOptions =>
-{
-    serverOptions.AddServerHeader = false;
-});
+✅ **1. Exposed `.env` files**
+✅ **2. Source maps deployed publicly**
+✅ **3. Weak Content Security Policy**
+✅ **4. Missing or loose CORS rules**
+✅ **5. Unnecessary debug pages (e.g. `/api/debug`)**
+✅ **6. Verbose error pages in prod**
+✅ **7. Open directory listing on `public/` files**
 
-// 2. Configure strict transport security
-builder.Services.AddHsts(options =>
-{
-    options.Preload = true;
-    options.IncludeSubDomains = true;
-    options.MaxAge = TimeSpan.FromDays(365);
-    options.ExcludedHosts.Clear();
-});
+---
 
-// 3. Add security headers middleware
-builder.Services.AddSecurityHeaders();
+## 🧩 Step-by-Step Secure Config
 
-// 4. Configure production-ready error handling
-if (!builder.Environment.IsDevelopment())
-{
-    builder.Services.AddExceptionHandler<ProductionExceptionHandler>();
-    builder.WebHost.UseSetting("detailedErrors", "false");
-}
+---
 
-var app = builder.Build();
+### ✅ 1️⃣ Remove secrets from client code
 
-// 5. Enforce security middleware
-app.UseSecurityHeaders();
-app.UseHsts();
-app.UseHttpsRedirection();
+**Mistake:**
+
+```ts
+// DO NOT DO THIS!
+export const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 ```
 
-### 2. Security Headers Configuration
+**Fix:**
 
-#### Comprehensive Security Headers Middleware
+* Never expose *server-only* secrets via `NEXT_PUBLIC_` or direct exports.
+* Only expose *public* keys using `NEXT_PUBLIC_`.
 
-```csharp
-public static class SecurityHeadersMiddlewareExtensions
-{
-    public static IApplicationBuilder UseSecurityHeaders(this IApplicationBuilder app)
-    {
-        var policyCollection = new HeaderPolicyCollection()
-            .AddFrameOptionsDeny()
-            .AddXssProtectionBlock()
-            .AddContentTypeOptionsNoSniff()
-            .AddReferrerPolicyStrictOriginWhenCrossOrigin()
-            .AddCrossOriginOpenerPolicy(builder => builder.SameOrigin())
-            .AddCrossOriginResourcePolicy(builder => builder.SameOrigin())
-            .AddCrossOriginEmbedderPolicy(builder => builder.RequireCorp())
-            .AddContentSecurityPolicy(builder =>
-            {
-                builder.AddObjectSrc().None();
-                builder.AddFormAction().Self();
-                builder.AddFrameAncestors().None();
-                builder.AddDefaultSrc().Self();
-                builder.AddScriptSrc().Self().WithNonce();
-                builder.AddStyleSrc().Self().WithNonce();
-                builder.AddImgSrc().Self().Data();
-            })
-            .RemoveServerHeader()
-            .AddPermissionsPolicy(builder =>
-            {
-                builder.AddAccelerometer().None();
-                builder.AddCamera().None();
-                builder.AddGeolocation().None();
-                builder.AddMicrophone().None();
-                builder.AddPayment().None();
-            });
+---
 
-        return app.UseSecurityHeaders(policyCollection);
-    }
-}
+### ✅ 2️⃣ Secure `.env` files
+
+* Add `.env` and `.env.*` to `.gitignore`.
+* Do not push `.env` to your repo or deploy them to your `public/` folder.
+
+---
+
+### ✅ 3️⃣ Prevent source map leaks
+
+**By default**, Next.js won’t expose source maps publicly.
+If you use `source-map` in `next.config.js` for debugging — disable for production:
+
+```js
+const nextConfig = {
+  productionBrowserSourceMaps: false
+};
+
+module.exports = nextConfig;
 ```
 
-### 3. Production Exception Handling
+---
 
-#### Secure Exception Handler
+### ✅ 4️⃣ Use a strict Content Security Policy (CSP)
 
-```csharp
-public class ProductionExceptionHandler : IExceptionHandler
-{
-    private readonly ILogger<ProductionExceptionHandler> _logger;
+Add security headers in **middleware** or your hosting config.
 
-    public ProductionExceptionHandler(ILogger<ProductionExceptionHandler> logger)
-    {
-        _logger = logger;
-    }
+**Example: `next.config.js`**
 
-    public async ValueTask<bool> TryHandleAsync(
-        HttpContext httpContext,
-        Exception exception,
-        CancellationToken cancellationToken)
-    {
-        _logger.LogError(
-            exception, "An unhandled exception has occurred");
-        
-        var problemDetails = new ProblemDetails
-        {
-            Title = "An error occurred",
-            Status = StatusCodes.Status500InternalServerError,
-            Instance = httpContext.Request.Path
-        };
+```js
+module.exports = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: `
+              default-src 'self';
+              script-src 'self' 'unsafe-inline';
+              style-src 'self' 'unsafe-inline';
+              img-src 'self' data:;
+              connect-src 'self';
+              frame-ancestors 'none';
+            `.replace(/\s{2,}/g, ' ').trim()
+          },
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY'
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff'
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'strict-origin-when-cross-origin'
+          }
+        ]
+      }
+    ];
+  }
+};
+```
 
-        // Sanitize error details in production
-        if (httpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
-        {
-            problemDetails.Detail = exception.ToString();
-        }
-        else
-        {
-            problemDetails.Detail = "An unexpected error occurred. Please try again later.";
-        }
+---
 
-        httpContext.Response.StatusCode = problemDetails.Status.Value;
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+### ✅ 5️⃣ Configure CORS properly (for `api/`)
 
-        return true;
-    }
+If you expose `/api` routes in Next.js:
+
+* **Allow only trusted origins**
+* Use `allowedMethods`
+
+Example using `nextjs-cors`:
+
+```ts
+import NextCors from 'nextjs-cors';
+
+export default async function handler(req, res) {
+  await NextCors(req, res, {
+    methods: ['GET', 'POST'],
+    origin: process.env.ALLOWED_ORIGIN,
+    optionsSuccessStatus: 200
+  });
+
+  res.json({ message: 'OK' });
 }
 ```
 
-### 4. Secure CORS Configuration
+---
 
-#### Granular CORS Policy
+### ✅ 6️⃣ Disable debug routes in production
 
-```csharp
-// Program.cs
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+Remove or gate routes like `/api/debug`.
 
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("ProductionCors", policy =>
-    {
-        policy.WithOrigins(allowedOrigins)
-              .WithMethods("GET", "POST", "PUT", "DELETE")
-              .AllowAnyHeader()
-              .SetPreflightMaxAge(TimeSpan.FromSeconds(86400))
-              .WithExposedHeaders("X-Correlation-ID");
-    });
+```ts
+export default function handler(req, res) {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).end();
+  }
 
-    // Strict policy for sensitive endpoints
-    options.AddPolicy("StrictCors", policy =>
-    {
-        policy.WithOrigins(allowedOrigins[0]) // Only primary origin
-              .WithMethods("POST")
-              .WithHeaders("Content-Type", "Authorization")
-              .SetPreflightMaxAge(TimeSpan.FromSeconds(3600));
-    });
-});
-
-// Apply in controllers
-[ApiController]
-[Route("api/[controller]")]
-[EnableCors("ProductionCors")]
-public class ProductsController : ControllerBase
-{
-    [EnableCors("StrictCors")]
-    [HttpPost("purchase")]
-    public IActionResult Purchase([FromBody] PurchaseRequest request)
-    {
-        // Sensitive operation
-    }
+  // Debug logic here
 }
 ```
 
-### 5. HTTP Method Restrictions
+---
 
-#### Endpoint-Level Method Filtering
+### ✅ 7️⃣ Custom error page for production
 
-```csharp
-// Middleware to restrict HTTP methods
-public class HttpMethodRestrictionMiddleware
-{
-    private readonly RequestDelegate _next;
-    private readonly ILogger<HttpMethodRestrictionMiddleware> _logger;
-    private readonly string[] _allowedMethods = { "GET", "POST", "PUT", "DELETE" };
+Do **not** leak stack traces:
 
-    public HttpMethodRestrictionMiddleware(
-        RequestDelegate next,
-        ILogger<HttpMethodRestrictionMiddleware> logger)
-    {
-        _next = next;
-        _logger = logger;
-    }
-
-    public async Task Invoke(HttpContext context)
-    {
-        if (!_allowedMethods.Contains(context.Request.Method))
-        {
-            _logger.LogWarning(
-                "Blocked disallowed HTTP method {Method} for {Path}",
-                context.Request.Method,
-                context.Request.Path);
-            
-            context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
-            await context.Response.WriteAsync("Method not allowed");
-            return;
-        }
-
-        await _next(context);
-    }
+```tsx
+// pages/_error.tsx
+export default function Error({ statusCode }) {
+  return (
+    <p>
+      {statusCode
+        ? `An error ${statusCode} occurred`
+        : 'An unexpected error occurred'}
+    </p>
+  );
 }
 
-// Register in Program.cs
-app.UseMiddleware<HttpMethodRestrictionMiddleware>();
+Error.getInitialProps = ({ res, err }) => {
+  const statusCode = res?.statusCode || err?.statusCode || 404;
+  return { statusCode };
+};
 ```
 
-### 6. Secure File/Directory Permissions
+---
 
-#### Secure File Access Service
+## ✅ 8️⃣ Harden your hosting
 
-```csharp
-public class SecureFileService
-{
-    private readonly string _rootPath;
-    private readonly ILogger<SecureFileService> _logger;
+✔️ Use a CDN that disables directory listing
+✔️ Don’t deploy your `.next/` folder with dev logs
+✔️ Use `next build && next start` for production — **not `next dev`**
 
-    public SecureFileService(
-        IWebHostEnvironment env,
-        ILogger<SecureFileService> logger)
-    {
-        _rootPath = Path.Combine(env.ContentRootPath, "SecureFiles");
-        _logger = logger;
-        
-        // Ensure directory exists with secure permissions
-        if (!Directory.Exists(_rootPath))
-        {
-            Directory.CreateDirectory(_rootPath);
-            SetSecurePermissions(_rootPath);
-        }
-    }
+---
 
-    public async Task<string> ReadSecureFileAsync(string fileName)
-    {
-        var filePath = GetSecurePath(fileName);
-        
-        // Verify file is within secure directory
-        if (!filePath.StartsWith(_rootPath))
-        {
-            _logger.LogError("Path traversal attempt detected: {Path}", filePath);
-            throw new SecurityException("Invalid file path");
-        }
+## ✅ 9️⃣ Automate configuration checks
 
-        return await File.ReadAllTextAsync(filePath);
-    }
+Use:
 
-    private string GetSecurePath(string fileName)
-    {
-        // Sanitize file name
-        var safeFileName = Path.GetFileName(fileName);
-        if (string.IsNullOrEmpty(safeFileName))
-        {
-            throw new ArgumentException("Invalid file name");
-        }
-        
-        return Path.Combine(_rootPath, safeFileName);
-    }
+* **ESLint**: Check for accidental `console.log` in production
+* **Next.js Analytics**: Verify bundle leaks
+* **npm audit**: Keep dependencies safe
 
-    private void SetSecurePermissions(string path)
-    {
-        try
-        {
-            // Windows ACLs
-            var directoryInfo = new DirectoryInfo(path);
-            var directorySecurity = directoryInfo.GetAccessControl();
-            
-            directorySecurity.AddAccessRule(
-                new FileSystemAccessRule(
-                    "Authenticated Users",
-                    FileSystemRights.ReadAndExecute,
-                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-                    PropagationFlags.None,
-                    AccessControlType.Allow));
-            
-            directoryInfo.SetAccessControl(directorySecurity);
-        }
-        catch (PlatformNotSupportedException)
-        {
-            // Linux/Unix systems
-            File.SetUnixFileMode(path, 
-                UnixFileMode.UserRead | UnixFileMode.UserExecute |
-                UnixFileMode.GroupRead | UnixFileMode.GroupExecute);
-        }
-    }
-}
+---
+
+## ✅ 10️⃣ CI checks for secrets
+
+Add a secret scan:
+
+```bash
+# Example: git-secrets or truffleHog
+npx trufflehog filesystem .
 ```
 
-### 7. Secure Configuration Management
+---
 
-#### Configuration Validation
+## 📌 Summary: Secure Next.js Config
 
-```csharp
-public class SecurityConfigurationValidator
-{
-    private readonly IConfiguration _config;
-    private readonly ILogger<SecurityConfigurationValidator> _logger;
+| ✔️ | Best Practice                 |
+| -- | ----------------------------- |
+| ✅  | No secrets in `NEXT_PUBLIC_*` |
+| ✅  | CSP + secure headers          |
+| ✅  | No source maps in prod        |
+| ✅  | Debug routes disabled         |
+| ✅  | Only trusted CORS             |
+| ✅  | Custom error pages            |
+| ✅  | Secure CDN config             |
+| ✅  | Audit and lint in CI          |
 
-    public SecurityConfigurationValidator(
-        IConfiguration config,
-        ILogger<SecurityConfigurationValidator> logger)
-    {
-        _config = config;
-        _logger = logger;
-    }
+---
 
-    public void Validate()
-    {
-        CheckForDefaultCredentials();
-        CheckForDebugSettings();
-        ValidateEncryptionKeys();
-        CheckCorsOrigins();
-    }
+## Final Note
 
-    private void CheckForDefaultCredentials()
-    {
-        var adminUser = _config["AdminCredentials:Username"];
-        var adminPass = _config["AdminCredentials:Password"];
-        
-        if (adminUser == "admin" || adminPass == "admin123")
-        {
-            _logger.LogCritical("Default admin credentials detected!");
-            throw new SecurityConfigurationException("Default credentials are not allowed");
-        }
-    }
+🛡️ **Security config is not “set once and forget”.**
+✅ Automate it.
+✅ Test your prod build with `curl -I` and security scanners (ZAP, Nuclei).
+✅ Do code reviews for **.env leaks, debug flags, or open endpoints**.
 
-    private void CheckForDebugSettings()
-    {
-        if (_config.GetValue<bool>("EnableDebugFeatures"))
-        {
-            _logger.LogWarning("Debug features are enabled in configuration");
-        }
-    }
-
-    private void ValidateEncryptionKeys()
-    {
-        var keys = new[]
-        {
-            _config["DataProtection:Key"],
-            _config["Jwt:SecretKey"],
-            _config["Encryption:MasterKey"]
-        };
-
-        if (keys.Any(k => string.IsNullOrEmpty(k) || k.Length < 32))
-        {
-            throw new SecurityConfigurationException("Encryption keys are not properly configured");
-        }
-    }
-
-    private void CheckCorsOrigins()
-    {
-        var origins = _config.GetSection("Cors:AllowedOrigins").Get<string[]>();
-        if (origins?.Contains("*") == true)
-        {
-            _logger.LogCritical("Dangerous CORS configuration - wildcard origin allowed");
-            throw new SecurityConfigurationException("Wildcard CORS origin is not allowed");
-        }
-    }
-}
-
-// Register in Program.cs
-builder.Services.AddHostedService<ConfigurationValidationService>();
-```
-
-## Automated Security Scanning
-
-### 1. Configuration Health Check
-
-```csharp
-public class SecurityConfigurationHealthCheck : IHealthCheck
-{
-    private readonly IConfiguration _config;
-    
-    public SecurityConfigurationHealthCheck(IConfiguration config)
-    {
-        _config = config;
-    }
-    
-    public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context,
-        CancellationToken cancellationToken = default)
-    {
-        var issues = new List<string>();
-        
-        // Check for debug mode
-        if (_config.GetValue<bool>("EnableDebugFeatures"))
-        {
-            issues.Add("Debug features are enabled in production");
-        }
-        
-        // Check for default passwords
-        if (_config["AdminPassword"] == "admin123")
-        {
-            issues.Add("Default admin password detected");
-        }
-        
-        // Check HTTPS enforcement
-        if (!_config.GetValue<bool>("EnforceHttps"))
-        {
-            issues.Add("HTTPS enforcement is disabled");
-        }
-        
-        return issues.Any() 
-            ? Task.FromResult(HealthCheckResult.Unhealthy(
-                "Security configuration issues: " + string.Join(", ", issues)))
-            : Task.FromResult(HealthCheckResult.Healthy());
-    }
-}
-
-// Register in Program.cs
-builder.Services.AddHealthChecks()
-    .AddCheck<SecurityConfigurationHealthCheck>("security_config");
-```
-
-### 2. Security Middleware Scanner
-
-```csharp
-public class SecurityMiddlewareScanner
-{
-    private readonly IApplicationBuilder _app;
-    private readonly ILogger<SecurityMiddlewareScanner> _logger;
-    
-    public SecurityMiddlewareScanner(
-        IApplicationBuilder app,
-        ILogger<SecurityMiddlewareScanner> logger)
-    {
-        _app = app;
-        _logger = logger;
-    }
-    
-    public void Scan()
-    {
-        var middlewareTypes = GetMiddlewareTypes();
-        
-        CheckForRequiredMiddleware(middlewareTypes);
-        CheckForDangerousMiddleware(middlewareTypes);
-    }
-    
-    private IEnumerable<Type> GetMiddlewareTypes()
-    {
-        // Reflection to inspect middleware pipeline
-        var field = _app.GetType().GetField("_components", 
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        
-        if (field?.GetValue(_app) is not List<Func<RequestDelegate, RequestDelegate>> components)
-            return Enumerable.Empty<Type>();
-        
-        return components.Select(c => 
-            c.Target?.GetType().GetField("middleware")?.GetValue(c.Target)?.GetType())
-            .Where(t => t != null)!;
-    }
-    
-    private void CheckForRequiredMiddleware(IEnumerable<Type> middlewareTypes)
-    {
-        var requiredMiddleware = new[]
-        {
-            typeof(HstsMiddleware),
-            typeof(HttpsRedirectionMiddleware),
-            typeof(AuthorizationMiddleware)
-        };
-        
-        foreach (var required in requiredMiddleware)
-        {
-            if (!middlewareTypes.Contains(required))
-            {
-                _logger.LogWarning("Missing required middleware: {Middleware}", required.Name);
-            }
-        }
-    }
-    
-    private void CheckForDangerousMiddleware(IEnumerable<Type> middlewareTypes)
-    {
-        var dangerousMiddleware = new[]
-        {
-            typeof(DeveloperExceptionPageMiddleware)
-        };
-        
-        foreach (var dangerous in dangerousMiddleware)
-        {
-            if (middlewareTypes.Contains(dangerous))
-            {
-                _logger.LogError("Dangerous middleware detected in production: {Middleware}", 
-                    dangerous.Name);
-            }
-        }
-    }
-}
-```
-
-## Best Practices Summary
-
-1. **Remove Default Configurations** - Never ship with default credentials or settings
-2. **Implement Security Headers** - Comprehensive protection via headers
-3. **Proper Error Handling** - Never expose stack traces in production
-4. **Granular CORS Policies** - Restrict origins, methods, and headers
-5. **HTTP Method Restrictions** - Allow only necessary methods
-6. **Secure File Permissions** - Principle of least privilege for filesystem access
-7. **Configuration Validation** - Automated checks for insecure settings
-8. **Health Monitoring** - Continuous security configuration checks
-9. **Middleware Scanning** - Verify security middleware is properly configured
-10. **Automated Scanning** - Regular checks for misconfigurations
+---
